@@ -1,36 +1,51 @@
 import os
+import time
 import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.error import Conflict, NetworkError
 
-# Servidor Web interno para enganar o Render
+# ==========================================
+# 1. SERVIDOR WEB FALSO PARA O RENDER FREE
+# ==========================================
+# O Render Web Service exige que a aplicação responda a uma porta HTTP.
+# Esse servidor simples faz exatamente isso para manter o serviço online 24/7.
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Telegram Ativo!")
+        self.wfile.write(b"Bot do Deco Ativo e Operante!")
+        
+    def log_message(self, format, *args):
+        pass # Desativa os logs de acesso web para não poluir o terminal
 
 def run_dummy_server():
-    port = int(os.environ.get("PORT", 8080))
+    # O Render passa a porta dinamicamente pela variável de ambiente $PORT
+    port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# Configurações do Bot
+# ==========================================
+# 2. CONFIGURAÇÕES E TOKENS
+# ==========================================
 TOKEN = "8874153543:AAHJMpuc_q1ZWhBHyG-2jBP9w9DDnw7m_Hg"
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
 
+# ==========================================
+# 3. COMANDOS DO TELEGRAM
+# ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
         "Comandos disponíveis:\n"
-        "🔹 `/analise MOEDA` - Análise de Funding Rate e variação (ex: `/analise BTCUSDT`)\n"
+        "🔹 `/analise MOEDA` - Análise de Funding Rate (ex: `/analise BTCUSDT`)\n"
         "🔹 `/scanner` - Varredura das maiores altas e baixas\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -46,6 +61,12 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10).json()
+        
+        # Verifica se a moeda existe nos futuros da Binance
+        if "code" in res_funding:
+            await update.message.reply_text(f"❌ O par `{symbol}` não foi encontrado no mercado de futuros da Binance.", parse_mode="Markdown")
+            return
+            
         funding_rate = float(res_funding.get("lastFundingRate", 0)) * 100
 
         res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10).json()
@@ -87,6 +108,7 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         usdt_list = []
         for t in tickers:
             symbol = t.get("symbol", "")
+            # Filtra apenas pares em USDT e ignora shitcoins estranhas/índices
             if symbol.endswith("USDT") and not symbol.startswith("1000"):
                 try:
                     pct = float(t.get("priceChangePercent", 0))
@@ -118,16 +140,35 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Erro ao executar o scanner: {str(e)}")
 
+# ==========================================
+# 4. LOOP ANTI-CONFLITO DO RENDER
+# ==========================================
 def main():
+    # 1. Sobe o servidor HTTP em segundo plano para o Render parar de reclamar
     threading.Thread(target=run_dummy_server, daemon=True).start()
+    print("🌐 Servidor HTTP Dummy iniciado.")
 
+    # 2. Constrói o aplicativo do bot
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analise", analise))
     app.add_handler(CommandHandler("scanner", scanner))
-    
-    print("🤖 Bot rodando com sucesso...")
-    app.run_polling()
+
+    # 3. Mantém o bot insistindo em conectar. Se o Render abrir 2 instâncias, a segunda espera.
+    while True:
+        try:
+            print("🤖 Conectando ao Telegram...")
+            # drop_pending_updates ignora mensagens travadas no passado
+            app.run_polling(drop_pending_updates=True) 
+        except Conflict:
+            print("⚠️ Conflito de instância! Render tentou duplicar o bot. Aguardando 10 segundos para reconexão limpa...")
+            time.sleep(10)
+        except NetworkError:
+            print("⚠️ Erro de rede da API do Telegram. Aguardando 5 segundos...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"❌ Erro inesperado: {e}. Reiniciando em 5 segundos...")
+            time.sleep(5)
 
 if __name__ == "__main__":
     main()
