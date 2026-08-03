@@ -1,12 +1,27 @@
 import asyncio
+import os
 import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Token do seu Bot fornecido pelo BotFather
+# Servidor Dummy para o Render não dar erro de Porta
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Ativo!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+# Token do seu Bot
 TOKEN = "8874153543:AAFY348QPQQaugeeZsdRxgmzPIeRbCUvOzk"
 
-# URL da API de Futuros da Binance
+# APIs Futuros Binance
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 
@@ -14,14 +29,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
         "Comandos disponíveis:\n"
-        "🔹 `/analise MOEDA` - Análise de Funding Rate e variação (ex: `/analise BLESSUSDT`)\n"
-        "🔹 `/scanner` - Varredura de moedas com anomalia de alta/baixa e risco de Short Squeeze\n"
+        "🔹 `/analise MOEDA` - Análise de Funding Rate e variação (ex: `/analise BTCUSDT`)\n"
+        "🔹 `/scanner` - Varredura das maiores altas, baixas e risco de Short Squeeze\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Digite o par correto. Exemplo: `/analise BLESSUSDT`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Digite o par correto. Exemplo: `/analise BTCUSDT`", parse_mode="Markdown")
         return
     
     symbol = context.args[0].upper()
@@ -29,11 +44,9 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol += "USDT"
 
     try:
-        # Busca Funding Rate
         res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}).json()
         funding_rate = float(res_funding.get("lastFundingRate", 0)) * 100
 
-        # Busca dados de 24h
         res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}).json()
         price_change = float(res_ticker.get("priceChangePercent", 0))
         last_price = float(res_ticker.get("lastPrice", 0))
@@ -61,21 +74,27 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         tickers = requests.get(TICKER_24HR_URL).json()
-        # Filtra os pares com maior variação e volume alto
-        top_gainers = [t for t in tickers if float(t.get("priceChangePercent", 0)) > 15]
-        top_losers = [t for t in tickers if float(t.get("priceChangePercent", 0)) < -15]
+        # Filtra apenas pares USDT válidos
+        usdt_tickers = [t for t in tickers if t.get("symbol", "").endswith("USDT")]
+        
+        # Ordena por variação de preço
+        sorted_tickers = sorted(usdt_tickers, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
+        
+        top_gainers = sorted_tickers[:5]
+        top_losers = sorted_tickers[-5:]
+        top_losers.reverse()
 
         msg = "🚀 *OPORTUNIDADES DE MERCADO EM TEMPO REAL*\n\n"
         
-        msg += "📈 *Maior Volume de Alta (Possíveis Alvos / Exaustão):*\n"
-        for t in top_gainers[:5]:
+        msg += "📈 *Maiores Altas (Possíveis Alvos / Exaustão):*\n"
+        for t in top_gainers:
             msg += f"• `{t['symbol']}`: +{float(t['priceChangePercent']):.2f}% (Preço: {t['lastPrice']})\n"
             
-        msg += "\n📉 *Maior Volume de Queda (Possível Repique / Long):*\n"
-        for t in top_losers[:5]:
+        msg += "\n📉 *Maiores Baixas (Possível Repique / Long):*\n"
+        for t in top_losers:
             msg += f"• `{t['symbol']}`: {float(t['priceChangePercent']):.2f}% (Preço: {t['lastPrice']})\n"
 
-        msg += "\n💡 *Dica do Mentor:* Antes de abrir ordem em qualquer uma dessas, use `/analise NOME` para checar o Funding Rate!"
+        msg += "\n💡 *Dica:* Envie `/analise MOEDA` para checar o Funding Rate da moeda escolhida!"
         
         await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -83,6 +102,9 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Erro ao executar o scanner de mercado.")
 
 def main():
+    # Inicia servidor Web em segundo plano para o Render
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analise", analise))
