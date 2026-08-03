@@ -25,6 +25,10 @@ TOKEN = "8874153543:AAFY348QPQQaugeeZsdRxgmzPIeRbCUvOzk"
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
@@ -44,10 +48,10 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol += "USDT"
 
     try:
-        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}).json()
+        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10).json()
         funding_rate = float(res_funding.get("lastFundingRate", 0)) * 100
 
-        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}).json()
+        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10).json()
         price_change = float(res_ticker.get("priceChangePercent", 0))
         last_price = float(res_ticker.get("lastPrice", 0))
 
@@ -67,15 +71,21 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text("❌ Erro ao buscar dados do par. Verifique se o nome está correto.")
+        await update.message.reply_text(f"❌ Erro ao buscar dados: {str(e)}")
 
 async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 *Rodando varredura no mercado de futuros... Aguarde.*", parse_mode="Markdown")
     
     try:
-        tickers = requests.get(TICKER_24HR_URL).json()
+        res = requests.get(TICKER_24HR_URL, headers=HEADERS, timeout=10)
+        tickers = res.json()
+        
+        if not isinstance(tickers, list):
+            await update.message.reply_text(f"❌ Resposta inesperada da API: {str(tickers)[:100]}")
+            return
+
         # Filtra apenas pares USDT válidos
-        usdt_tickers = [t for t in tickers if t.get("symbol", "").endswith("USDT")]
+        usdt_tickers = [t for t in tickers if isinstance(t, dict) and t.get("symbol", "").endswith("USDT")]
         
         # Ordena por variação de preço
         sorted_tickers = sorted(usdt_tickers, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
@@ -99,10 +109,9 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text("❌ Erro ao executar o scanner de mercado.")
+        await update.message.reply_text(f"❌ Erro ao executar scanner: {str(e)}")
 
 def main():
-    # Inicia servidor Web em segundo plano para o Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
     
     app = Application.builder().token(TOKEN).build()
