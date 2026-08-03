@@ -9,10 +9,10 @@ TOKEN = "8874153543:AAHJMpuc_q1ZWhBHyG-2jBP9w9DDnw7m_Hg"
 PORT = int(os.environ.get("PORT", 10000))
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
-BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
-TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+# Usando a API pública de Spot da Binance (100% aberta para servidores de cloud)
+SPOT_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
-# Lista focada em altcoins e memecoins com lotes mínimos super baixos (acessíveis para banca menor)
+# Altcoins de lote leve e acessível presentes em futuros
 PRINCIPAIS_PARES = [
     "PEPEUSDT", "SHIBUSDT", "DOGEUSDT", "XRPUSDT", "ADAUSDT",
     "GALAUSDT", "FLOKIUSDT", "BONKUSDT", "NEARUSDT", "ARBUSDT",
@@ -33,8 +33,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
         "Comandos disponíveis:\n"
-        "🔹 `/analise MOEDA` - Análise de Funding Rate e variação (ex: `/analise PEPEUSDT`)\n"
-        "🔹 `/scanner` - Varredura rápida nas altcoins de lote acessível\n"
+        "🔹 `/analise MOEDA` - Análise de variação (ex: `/analise PEPEUSDT`)\n"
+        "🔹 `/scanner` - Varredura rápida nas altcoins de lote leve\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -48,36 +48,23 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol += "USDT"
 
     try:
-        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=15).json()
-        if isinstance(res_funding, dict) and "code" in res_funding:
-            await update.message.reply_text(f"❌ O par `{symbol}` não foi encontrado nos futuros da Binance.", parse_mode="Markdown")
+        res = requests.get(SPOT_TICKER_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10)
+        if res.status_code != 200:
+            await update.message.reply_text(f"❌ O par `{symbol}` não foi encontrado.", parse_mode="Markdown")
             return
             
-        funding_rate = float(res_funding.get("lastFundingRate", 0)) * 100
-        
-        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=15).json()
-        if isinstance(res_ticker, list) and len(res_ticker) > 0:
-            res_ticker = res_ticker[0]
-            
-        price_change = float(res_ticker.get("priceChangePercent", 0))
-        last_price = float(res_ticker.get("lastPrice", 0))
-
-        alerta = ""
-        if funding_rate < -0.1:
-            alerta = "\n🚨 *ALERTA:* Funding Rate muito negativo! Risco ALTO de Short Squeeze."
-        elif funding_rate > 0.1:
-            alerta = "\n⚠️ *ALERTA:* Mercado muito alavancado em Long. Possível correção."
+        data = res.json()
+        price_change = float(data.get("priceChangePercent", 0))
+        last_price = float(data.get("lastPrice", 0))
 
         msg = (
             f"📊 *Análise Instantânea: {symbol}*\n\n"
             f"💰 *Preço Atual:* `{last_price}`\n"
             f"📈 *Variação 24h:* `{price_change:.2f}%`\n"
-            f"⚡ *Funding Rate:* `{funding_rate:.4f}%`\n"
-            f"{alerta}"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao buscar dados de {symbol} na Binance.")
+        await update.message.reply_text(f"❌ Erro ao buscar dados de {symbol}.")
 
 async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 *Varrendo altcoins de lote leve...*", parse_mode="Markdown")
@@ -85,7 +72,7 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         usdt_list = []
         for symbol in PRINCIPAIS_PARES:
             try:
-                res = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=5)
+                res = requests.get(SPOT_TICKER_URL, params={"symbol": symbol}, headers=HEADERS, timeout=5)
                 if res.status_code == 200:
                     data = res.json()
                     pct = float(data.get("priceChangePercent", 0))
