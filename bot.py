@@ -1,14 +1,15 @@
 import os
 import requests
-import asyncio
-from flask import Flask, request
+import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Configurações
+# Configuração de logs para rastrear tudo no Render
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 TOKEN = "8874153543:AAHJMpuc_q1ZWhBHyG-2jBP9w9DDnw7m_Hg"
 PORT = int(os.environ.get("PORT", 10000))
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
@@ -19,11 +20,8 @@ HEADERS = {
     'Referer': 'https://www.binance.com/'
 }
 
-app_flask = Flask(__name__)
-telegram_app = None
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(">>> Comando /start recebido do Telegram!")
+    logger.info("Comando /start acionado!")
     msg = (
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
         "Comandos disponíveis:\n"
@@ -71,16 +69,17 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
+        logger.error(f"Erro na analise: {e}")
         await update.message.reply_text(f"❌ Erro ao buscar dados de {symbol} na Binance.")
 
 async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(">>> Comando /scanner recebido do Telegram!")
+    logger.info("Comando /scanner acionado!")
     await update.message.reply_text("🔍 *Rodando varredura no mercado de futuros... Aguarde.*", parse_mode="Markdown")
     try:
         res = requests.get(TICKER_24HR_URL, headers=HEADERS, timeout=15)
         
         if res.status_code != 200:
-            await update.message.reply_text("❌ A Binance bloqueou temporariamente a consulta do Render. Tente novamente em instantes.")
+            await update.message.reply_text("❌ A Binance bloqueou temporariamente a consulta. Tente novamente em instantes.")
             return
 
         tickers = res.json()
@@ -119,44 +118,25 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
+        logger.error(f"Erro no scanner: {e}")
         await update.message.reply_text(f"❌ Não foi possível carregar o mercado no momento.")
 
-@app_flask.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    try:
-        json_data = request.get_json(force=True)
-        print(f">>> Requisição recebida do Telegram: {json_data}")
-        update = Update.de_json(json_data, telegram_app.bot)
-        asyncio.run(telegram_app.process_update(update))
-    except Exception as e:
-        print(f">>> Erro ao processar webhook: {e}")
-    return "OK", 200
-
-@app_flask.route("/")
-def index():
-    return "Bot Operando via Webhook com Sucesso!"
-
 def main():
-    global telegram_app
-    telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("analise", analise))
-    telegram_app.add_handler(CommandHandler("scanner", scanner))
+    # Cria a aplicação nativa do Telegram
+    application = Application.builder().token(TOKEN).build()
 
-    if RENDER_EXTERNAL_URL:
-        webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
-        async def setup_webhook():
-            # Força limpar o webhook antigo e aplicar o novo limpo
-            await telegram_app.bot.delete_webhook(drop_pending_updates=True)
-            await telegram_app.bot.set_webhook(url=webhook_url)
-            print(f"🔗 Webhook forçado e configurado para: {webhook_url}")
-        
-        try:
-            asyncio.run(setup_webhook())
-        except Exception as e:
-            print(f"⚠️ Erro ao configurar webhook: {e}")
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("analise", analise))
+    application.add_handler(CommandHandler("scanner", scanner))
 
-    app_flask.run(host="0.0.0.0", port=PORT)
+    logger.info("Iniciando o bot em modo Webhook nativo do Telegram...")
+    
+    # Deixa o Render feliz respondendo na porta web e rodando o bot simultaneamente
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{os.environ.get('RENDER_EXTERNAL_URL', '')}/{TOKEN}"
+    )
 
 if __name__ == "__main__":
     main()
