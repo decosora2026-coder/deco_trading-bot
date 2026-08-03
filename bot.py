@@ -12,16 +12,22 @@ RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-HEADERS = {'User-Agent': 'Mozilla/5.0'}
+
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json',
+    'Referer': 'https://www.binance.com/'
+}
 
 app_flask = Flask(__name__)
 telegram_app = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(">>> Comando /start recebido do Telegram!")
     msg = (
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
         "Comandos disponíveis:\n"
-        "🔹 `/analise MOEDA` - Análise de Funding Rate (ex: `/analise BTCUSDT`)\n"
+        "🔹 `/analise MOEDA` - Análise de Funding Rate e variação (ex: `/analise BTCUSDT`)\n"
         "🔹 `/scanner` - Varredura das maiores altas e baixas\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -36,14 +42,15 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol += "USDT"
 
     try:
-        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10).json()
-        if "code" in res_funding:
+        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=15).json()
+        if isinstance(res_funding, dict) and "code" in res_funding:
             await update.message.reply_text(f"❌ O par `{symbol}` não foi encontrado nos futuros da Binance.", parse_mode="Markdown")
             return
             
         funding_rate = float(res_funding.get("lastFundingRate", 0)) * 100
-        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=10).json()
-        if isinstance(res_ticker, list):
+        
+        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=15).json()
+        if isinstance(res_ticker, list) and len(res_ticker) > 0:
             res_ticker = res_ticker[0]
             
         price_change = float(res_ticker.get("priceChangePercent", 0))
@@ -64,15 +71,21 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao buscar dados de {symbol}: {str(e)}")
+        await update.message.reply_text(f"❌ Erro ao buscar dados de {symbol} na Binance.")
 
 async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(">>> Comando /scanner recebido do Telegram!")
     await update.message.reply_text("🔍 *Rodando varredura no mercado de futuros... Aguarde.*", parse_mode="Markdown")
     try:
-        res = requests.get(TICKER_24HR_URL, headers=HEADERS, timeout=10)
+        res = requests.get(TICKER_24HR_URL, headers=HEADERS, timeout=15)
+        
+        if res.status_code != 200:
+            await update.message.reply_text("❌ A Binance bloqueou temporariamente a consulta do Render. Tente novamente em instantes.")
+            return
+
         tickers = res.json()
         if not isinstance(tickers, list):
-            await update.message.reply_text("❌ Não foi possível obter os dados da Binance.")
+            await update.message.reply_text("❌ Não foi possível carregar o mercado no momento.")
             return
 
         usdt_list = []
@@ -85,6 +98,10 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     usdt_list.append({"symbol": symbol, "change": pct, "price": price})
                 except ValueError:
                     continue
+
+        if not usdt_list:
+            await update.message.reply_text("❌ Nenhum dado retornado pela Binance.")
+            return
 
         sorted_tickers = sorted(usdt_list, key=lambda x: x["change"], reverse=True)
         top_gainers = sorted_tickers[:5]
@@ -102,16 +119,17 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao executar o scanner: {str(e)}")
+        await update.message.reply_text(f"❌ Não foi possível carregar o mercado no momento.")
 
 @app_flask.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    """Recebe atualizações do Telegram via webhook"""
-    json_data = request.get_json(force=True)
-    update = Update.de_json(json_data, telegram_app.bot)
-    
-    # Processa o update de forma compatível com o Python moderno
-    asyncio.run(telegram_app.process_update(update))
+    try:
+        json_data = request.get_json(force=True)
+        print(f">>> Requisição recebida do Telegram: {json_data}")
+        update = Update.de_json(json_data, telegram_app.bot)
+        asyncio.run(telegram_app.process_update(update))
+    except Exception as e:
+        print(f">>> Erro ao processar webhook: {e}")
     return "OK", 200
 
 @app_flask.route("/")
@@ -120,26 +138,24 @@ def index():
 
 def main():
     global telegram_app
-    
-    # Cria o aplicativo do Telegram
     telegram_app = Application.builder().token(TOKEN).build()
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("analise", analise))
     telegram_app.add_handler(CommandHandler("scanner", scanner))
 
-    # Configura o webhook de forma assíncrona segura
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
         async def setup_webhook():
+            # Força limpar o webhook antigo e aplicar o novo limpo
+            await telegram_app.bot.delete_webhook(drop_pending_updates=True)
             await telegram_app.bot.set_webhook(url=webhook_url)
+            print(f"🔗 Webhook forçado e configurado para: {webhook_url}")
         
         try:
             asyncio.run(setup_webhook())
-            print(f"🔗 Webhook configurado com sucesso para: {webhook_url}")
         except Exception as e:
             print(f"⚠️ Erro ao configurar webhook: {e}")
 
-    # Inicia o servidor Flask nas portas do Render
     app_flask.run(host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
