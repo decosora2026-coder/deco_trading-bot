@@ -1,6 +1,6 @@
 import os
 import requests
-import threading
+import asyncio
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -118,39 +118,40 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Não foi possível carregar o mercado no momento.")
 
+def init_telegram():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("analise", analise))
+    app.add_handler(CommandHandler("scanner", scanner))
+    return app
+
+telegram_app = init_telegram()
+
 @app_flask.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     try:
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, telegram_app.bot)
-        telegram_app.update_queue.put_nowait(update)
+        
+        async def process():
+            await telegram_app.initialize()
+            await telegram_app.process_update(update)
+
+        asyncio.run(process())
     except Exception as e:
-        print(f"Erro no webhook: {e}")
+        print(f"Erro ao processar mensagem: {e}")
     return "OK", 200
 
 @app_flask.route("/", methods=["GET"])
 def index():
     return "Bot Operando via Webhook com Sucesso!"
 
-def run_telegram():
-    global telegram_app
-    telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("analise", analise))
-    telegram_app.add_handler(CommandHandler("scanner", scanner))
-
+def setup_webhook_url():
     if RENDER_EXTERNAL_URL:
-        webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
-        telegram_app.bot.set_webhook(url=webhook_url)
-        print(f"🔗 Webhook configurado com sucesso para: {webhook_url}")
-
-    telegram_app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook", params={"url": url})
+        print(f"🔗 Webhook registrado com sucesso na Binance/Telegram: {url}")
 
 if __name__ == "__main__":
-    # Roda o Telegram em uma thread separada para o Flask poder atender a porta web do Render
-    t = threading.Thread(target=run_telegram)
-    t.daemon = True
-    t.start()
-
-    # Roda o Flask na porta exigida pelo Render
+    setup_webhook_url()
     app_flask.run(host="0.0.0.0", port=PORT)
