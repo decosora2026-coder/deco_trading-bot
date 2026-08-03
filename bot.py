@@ -1,27 +1,24 @@
-import asyncio
 import os
+import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Servidor Dummy para o Render não dar erro de Porta
+# Servidor Web interno para enganar o Render (evita o Timed Out de porta no plano Free)
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Ativo!")
+        self.wfile.write(b"Bot Telegram Ativo!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# Token do seu Bot
+# Configurações do Bot
 TOKEN = "8874153543:AAFY348QPQQaugeeZsdRxgmzPIeRbCUvOzk"
-
-# APIs Futuros Binance
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 
@@ -34,13 +31,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *Deco Radar Futuros Bot Ativo!*\n\n"
         "Comandos disponíveis:\n"
         "🔹 `/analise MOEDA` - Análise de Funding Rate e variação (ex: `/analise BTCUSDT`)\n"
-        "🔹 `/scanner` - Varredura das maiores altas, baixas e risco de Short Squeeze\n"
+        "🔹 `/scanner` - Varredura das maiores altas e baixas\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Digite o par correto. Exemplo: `/analise BTCUSDT`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Digite o par correto. Ex: `/analise BTCUSDT`", parse_mode="Markdown")
         return
     
     symbol = context.args[0].upper()
@@ -57,7 +54,7 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         alerta = ""
         if funding_rate < -0.1:
-            alerta = "\n🚨 *ALERTA:* Funding Rate muito negativo! Risco ALTO de Short Squeeze (Cuidado com Short!)."
+            alerta = "\n🚨 *ALERTA:* Funding Rate muito negativo! Risco ALTO de Short Squeeze."
         elif funding_rate > 0.1:
             alerta = "\n⚠️ *ALERTA:* Mercado muito alavancado em Long. Possível correção."
 
@@ -81,13 +78,10 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tickers = res.json()
         
         if not isinstance(tickers, list):
-            await update.message.reply_text(f"❌ Resposta inesperada da API: {str(tickers)[:100]}")
+            await update.message.reply_text("❌ Não foi possível carregar o mercado no momento.")
             return
 
-        # Filtra apenas pares USDT válidos
         usdt_tickers = [t for t in tickers if isinstance(t, dict) and t.get("symbol", "").endswith("USDT")]
-        
-        # Ordena por variação de preço
         sorted_tickers = sorted(usdt_tickers, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
         
         top_gainers = sorted_tickers[:5]
@@ -109,11 +103,12 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao executar scanner: {str(e)}")
+        await update.message.reply_text(f"❌ Erro ao executar o scanner: {str(e)}")
 
 def main():
+    # Sobe o servidor web falso em segundo plano antes do Bot
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analise", analise))
