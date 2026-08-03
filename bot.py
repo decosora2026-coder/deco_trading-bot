@@ -18,7 +18,7 @@ def run_dummy_server():
     server.serve_forever()
 
 # Configurações do Bot
-TOKEN = "8874153543:AAFY348QPQQaugeeZsdRxgmzPIeRbCUvOzk"
+TOKEN = "8874153543:AAHJMpuc_q1ZWhBHyG-2jBP9w9DDnw7m_Hg"
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 TICKER_24HR_URL = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 
