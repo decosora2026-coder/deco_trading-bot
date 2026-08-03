@@ -1,5 +1,6 @@
 import os
 import requests
+import asyncio
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -7,7 +8,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # Configurações
 TOKEN = "8874153543:AAHJMpuc_q1ZWhBHyG-2jBP9w9DDnw7m_Hg"
 PORT = int(os.environ.get("PORT", 10000))
-# URL pública que o Render te dá (ex: https://deco-bot-worker.onrender.com)
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
@@ -107,10 +107,10 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @app_flask.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     """Recebe atualizações do Telegram via webhook"""
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    telegram_app.update_queue.put_nowil(update) if hasattr(telegram_app, 'update_queue') else None
-    # Forma compatível de processar o update
-    import asyncio
+    json_data = request.get_json(force=True)
+    update = Update.de_json(json_data, telegram_app.bot)
+    
+    # Processa o update de forma compatível com o Python moderno
     asyncio.run(telegram_app.process_update(update))
     return "OK", 200
 
@@ -121,20 +121,25 @@ def index():
 def main():
     global telegram_app
     
-    # Inicializa o bot do Telegram sem polling (sem conflito)
+    # Cria o aplicativo do Telegram
     telegram_app = Application.builder().token(TOKEN).build()
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("analise", analise))
     telegram_app.add_handler(CommandHandler("scanner", scanner))
 
-    # Configura o webhook automaticamente se a URL do Render existir
+    # Configura o webhook de forma assíncrona segura
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(telegram_app.bot.set_webhook(url=webhook_url))
-        print(f"🔗 Webhook configurado para: {webhook_url}")
+        async def setup_webhook():
+            await telegram_app.bot.set_webhook(url=webhook_url)
+        
+        try:
+            asyncio.run(setup_webhook())
+            print(f"🔗 Webhook configurado com sucesso para: {webhook_url}")
+        except Exception as e:
+            print(f"⚠️ Erro ao configurar webhook: {e}")
 
-    # Roda o servidor Flask na porta exigida pelo Render
+    # Inicia o servidor Flask nas portas do Render
     app_flask.run(host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
