@@ -40,14 +40,14 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol += "USDT"
 
     try:
-        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=15).json()
+        res_funding = requests.get(BINANCE_FUTURES_URL, params={"symbol": symbol}, headers=HEADERS, timeout=20).json()
         if isinstance(res_funding, dict) and "code" in res_funding:
             await update.message.reply_text(f"❌ O par `{symbol}` não foi encontrado nos futuros da Binance.", parse_mode="Markdown")
             return
             
         funding_rate = float(res_funding.get("lastFundingRate", 0)) * 100
         
-        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=15).json()
+        res_ticker = requests.get(TICKER_24HR_URL, params={"symbol": symbol}, headers=HEADERS, timeout=20).json()
         if isinstance(res_ticker, list) and len(res_ticker) > 0:
             res_ticker = res_ticker[0]
             
@@ -72,12 +72,13 @@ async def analise(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Erro ao buscar dados de {symbol} na Binance.")
 
 async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 *Rodando varredura no mercado de futuros... Aguarde.*", parse_mode="Markdown")
+    # Envia uma resposta imediata para o Telegram não dar timeout de conexão
+    await update.message.reply_text("🔍 *Conectando à Binance e processando o mercado... Aguarde.*", parse_mode="Markdown")
     try:
-        res = requests.get(TICKER_24HR_URL, headers=HEADERS, timeout=15)
+        res = requests.get(TICKER_24HR_URL, headers=HEADERS, timeout=25)
         
         if res.status_code != 200:
-            await update.message.reply_text("❌ A Binance bloqueou temporariamente a consulta. Tente novamente em instantes.")
+            await update.message.reply_text("❌ A Binance demorou para responder. Tente novamente em instantes.")
             return
 
         tickers = res.json()
@@ -116,7 +117,7 @@ async def scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Não foi possível carregar o mercado no momento.")
+        await update.message.reply_text(f"❌ Erro de conexão com a Binance ao rodar o scanner.")
 
 def init_telegram():
     app = Application.builder().token(TOKEN).build()
@@ -150,7 +151,7 @@ def setup_webhook_url():
     if RENDER_EXTERNAL_URL:
         url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
         requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook", params={"url": url})
-        print(f"🔗 Webhook registrado com sucesso na Binance/Telegram: {url}")
+        print(f"🔗 Webhook registrado com sucesso: {url}")
 
 if __name__ == "__main__":
     setup_webhook_url()
